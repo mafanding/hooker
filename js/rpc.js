@@ -214,6 +214,7 @@ rpc.exports = {
                 var cacheDir = context.getCodeCacheDir().getAbsolutePath();
                 var parent = context.getClassLoader();
                 var dexPath = "/data/local/tmp/radar.dex:" + dex_file;
+                console.log("dexPath", dexPath);
                 var newLoader = DexClassLoader.$new(
                     dexPath,
                     cacheDir,

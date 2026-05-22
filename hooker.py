@@ -292,21 +292,6 @@ def run_su_command(cmd, not_read=False):
             conn.close()
         except Exception as e:
             pass
-    try:
-        conn = _shell(["su", "0", "sh", "-c", cmd], stream=True)
-        try:
-            if not_read:
-                time.sleep(1)
-                return
-            output = conn.read_until_close()
-            return output.strip()
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
 
 
 def get_is_magisk_root() -> bool:
@@ -472,7 +457,7 @@ def _init_resource_jscode():
 
 _init_resource_jscode()
 
-def convert_jar_to_dex(jarfile: str) -> Optional[str]:
+def convert_jar_to_dex(jarfile: str) -> bool:
     """
     将 JAR 文件转换为 DEX 文件
 
@@ -498,7 +483,6 @@ def convert_jar_to_dex(jarfile: str) -> Optional[str]:
     else:
         dexfile = jarfile + '.dex'
     out_put_dex_file = f'{current_identifier}/{dexfile}'
-    d8_default_output_file = f'{current_identifier}/classes.dex'
     try:
         if dx_file:
             # 使用 dx 命令
@@ -507,10 +491,6 @@ def convert_jar_to_dex(jarfile: str) -> Optional[str]:
             # 使用 d8 命令
             cmd = [d8_file, '--output', current_identifier, f'{current_identifier}/{jarfile}']
         info(f"Converting {jarfile} to {dexfile}...")
-        if os.path.exists(out_put_dex_file):
-            os.remove(out_put_dex_file)
-        if d8_file and os.path.exists(d8_default_output_file):
-            os.remove(d8_default_output_file)
         # 执行转换
         result = subprocess.run(
             cmd,
@@ -518,8 +498,6 @@ def convert_jar_to_dex(jarfile: str) -> Optional[str]:
             text=True,
             check=True
         )
-        if d8_file and os.path.exists(d8_default_output_file) and d8_default_output_file != out_put_dex_file:
-            shutil.move(d8_default_output_file, out_put_dex_file)
         # 检查输出文件
         if os.path.exists(out_put_dex_file):
             file_size = os.path.getsize(out_put_dex_file)
@@ -527,8 +505,6 @@ def convert_jar_to_dex(jarfile: str) -> Optional[str]:
             return dexfile
         else:
             info(f"error: Conversion failed, output file not created")
-            if result.stdout:
-                info(f"Command output: {result.stdout}")
             if result.stderr:
                 info(f"Error output: {result.stderr}")
             return None
@@ -784,8 +760,6 @@ def compara_and_update_file(local_file, remote_file):
         push_file_to_remote(local_file, "/sdcard/", False)
     remote_md5 = get_remote_file_md5(remote_file)
     if local_md5 != remote_md5:
-        remote_dir = os.path.dirname(remote_file)
-        run_su_command(f"mkdir -p '{remote_dir}'")
         run_su_command(f"cp '/sdcard/{local_filename}' '{remote_file}'")
         run_su_command(f"chmod 555 '{remote_file}'")
         remote_md5 = get_remote_file_md5(remote_file)
@@ -1853,20 +1827,11 @@ def push_file_to_device_with_chmod(local_file, remote_file = None):
     filename = local_file.split("/")[-1]
     if remote_file == None:
         remote_file = f"/data/user/0/{current_identifier}/{filename}"
-    local_path = f"{current_identifier}/{local_file}"
-    if not compara_and_update_file(local_path, remote_file):
-        temp_remote_file = f"/sdcard/{filename}"
-        try:
-            push_file_to_remote(local_path, temp_remote_file, False)
-            run_su_command(f"su 0 sh -c 'cp \"{temp_remote_file}\" \"{remote_file}\"'")
-        except Exception:
-            pass
-        exists = run_su_command(f"su 0 sh -c 'test -f \"{remote_file}\" && echo exists || echo missing'")
-        if exists != "exists":
-            raise RuntimeError(f"failed to push file to device: {remote_file}")
+    if not compara_and_update_file(f"{current_identifier}/{local_file}", remote_file):
+        raise RuntimeError(f"failed to push file to device: {remote_file}")
     user_group_id = f"u0_a{(int(current_identifier_uid) - 10000)}"
-    run_su_command(f"su 0 sh -c 'chown {user_group_id}:{user_group_id} \"{remote_file}\" || true'")
-    run_su_command(f"su 0 sh -c 'chmod 644 \"{remote_file}\"'")
+    run_su_command(f"chown {user_group_id}:{user_group_id} {remote_file}")
+    run_su_command(f"chmod 777 {remote_file}")
     info(f"push file OK {remote_file}")
     return remote_file
 
@@ -1875,9 +1840,6 @@ def start_web_server(jar_file:str = "", with_xposed_daemon = False):
     all_classes = []
     if jar_file:
         dex_file = convert_jar_to_dex(jar_file)
-        if not dex_file:
-            warn(f"Deploy failure. unable to convert {jar_file} to dex")
-            return
         with open(f"{current_identifier}/{dex_file}", "rb") as f:
             dex = dvm.DalvikVMFormat(f.read())
         all_classes = []
